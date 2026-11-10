@@ -78,7 +78,8 @@ def main():
     print(f"Оригинал: {calculate_correlation(img_array):.4f}")
     
     arr_main = np.frombuffer(ct_main[:ct_len], dtype=np.uint8).reshape(shape)
-    print(f"{algorithm.upper()}: {calculate_correlation(arr_main):.4f}")
+    print(f"{algorithm.upper()}: {calculate_correlation(arr_main, 'horizontal'):.4f}")
+    print(f"{algorithm.upper()}: {calculate_correlation(arr_main, 'vertical'):.4f}")
 
     print("\n3. Построение гистограмм...")
     plot_histograms({
