@@ -1,3 +1,4 @@
+import json
 import os
 import numpy as np
 from PIL import Image
@@ -8,91 +9,97 @@ from metrics import calculate_entropy, calculate_correlation, plot_histograms, c
 
 def main():
     os.makedirs("results", exist_ok=True)
+    os.makedirs("recover", exist_ok=True)
+    os.makedirs("encrypted", exist_ok=True)
 
-    img_path = "imgs/gradient.png"
+    meta_path = "meta.json"
+
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta_data = json.load(f)
+        
+    meta_data["nonce"] = os.urandom(8).hex()
+
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta_data, f, indent=4)
+
+    algorithm = meta_data.get("algorithm", "aes-ctr")
+    source_img = meta_data.get("source", "gradient.png")
+    nonce = bytes.fromhex(meta_data["nonce"])
+
+    img_path = f"img/{source_img}"
+
     if not os.path.exists(img_path):
-        print(f"Ошибка: Файл {img_path} не найден. Создайте папку imgs и положите туда картинку.")
+        print(f"Ошибка: Файл {img_path} не найден!")
         return
 
     img = Image.open(img_path).convert("RGB")
     img_array = np.array(img)
     original_bytes = img_array.tobytes()
+    shape = img_array.shape
 
     xor_key = b"my-secret-xor-key"
     aes_key = b"0123456789abcdef"
 
-    print("="*50)
-    print("ШАГ 1: ШИФРОВАНИЕ")
-    print("="*50)
+    print(f"Алгоритм из meta.json: {algorithm}")
+    print(f"Исходный файл: {source_img}")
+    print()
+
+    if algorithm == "xor":
+        ct_main = xor_crypt(original_bytes, xor_key)
+        pt_main = xor_crypt(ct_main, xor_key)
+        ct_len = len(ct_main)
+        key_2 = bytearray(xor_key)
+    elif algorithm == "aes-ecb":
+        ct_main = aes_ecb_encrypt(original_bytes, aes_key)
+        pt_main = aes_ecb_decrypt(ct_main, aes_key)
+        ct_len = len(original_bytes)
+        key_2 = bytearray(aes_key)
+    elif algorithm == "aes-ctr":
+        ct_main, _ = aes_ctr_encrypt(original_bytes, aes_key, nonce=nonce)
+        pt_main = aes_ctr_decrypt(ct_main, aes_key, nonce)
+        ct_len = len(ct_main)
+        key_2 = bytearray(aes_key)
+    else:
+        print(f"Ошибка: Неизвестный алгоритм {algorithm}")
+        return
+
+    print(f"Обратимость: {original_bytes == pt_main}")
     
-    ct_xor = xor_crypt(original_bytes, xor_key)
-    ct_ecb = aes_ecb_encrypt(original_bytes, aes_key)
-    ct_ctr, nonce = aes_ctr_encrypt(original_bytes, aes_key)
+    Image.fromarray(np.frombuffer(ct_main[:ct_len], dtype=np.uint8).reshape(shape)).save(f"encrypted/encrypted_{algorithm}.png")
+    Image.fromarray(np.frombuffer(pt_main, dtype=np.uint8).reshape(shape)).save(f"recover/recovered_{algorithm}.png")
 
-    print("Данные успешно зашифрованы тремя методами.")
-
-    print("\n" + "="*50)
-    print("ШАГ 2: ПРОВЕРКА ОБРАТИМОСТИ")
-    print("="*50)
+    print(f"\n{algorithm.upper()}")
     
-    pt_xor = xor_crypt(ct_xor, xor_key)
-    pt_ecb = aes_ecb_decrypt(ct_ecb, aes_key)
-    pt_ctr = aes_ctr_decrypt(ct_ctr, aes_key, nonce)
-
-    print(f"XOR восстановлен:  {original_bytes == pt_xor}")
-    print(f"AES-ECB восстановлен: {original_bytes == pt_ecb}")
-    print(f"AES-CTR восстановлен: {original_bytes == pt_ctr}")
-
-    print("\n" + "="*50)
-
-    print("ШАГ 3: СТАТИСТИЧЕСКИЕ МЕТРИКИ")
-    print("="*50)
-    
-    print("--- Энтропия ---")
+    print("\n1. Энтропия")
     print(f"Оригинал: {calculate_entropy(original_bytes):.4f}")
-    print(f"XOR:      {calculate_entropy(ct_xor):.4f}")
-    print(f"AES-ECB:  {calculate_entropy(ct_ecb):.4f}")
-    print(f"AES-CTR:  {calculate_entropy(ct_ctr):.4f}")
+    print(f"{algorithm.upper()}: {calculate_entropy(ct_main[:ct_len]):.4f}")
 
-    print("\n--- Корреляция (Horizontal) ---")
+    print("\n2. Корреляция")
+    print(f"Оригинал: {calculate_correlation(img_array):.4f}")
+    
+    arr_main = np.frombuffer(ct_main[:ct_len], dtype=np.uint8).reshape(shape)
+    print(f"{algorithm.upper()}: {calculate_correlation(arr_main):.4f}")
 
-    shape = img_array.shape
-    print(f"Оригинал: {calculate_correlation(img_array, 'horizontal'):.4f}")
-    
-    arr_xor = np.frombuffer(ct_xor, dtype=np.uint8).reshape(shape)
-    print(f"XOR:      {calculate_correlation(arr_xor, 'horizontal'):.4f}")
-    
-    arr_ctr = np.frombuffer(ct_ctr, dtype=np.uint8).reshape(shape)
-    print(f"AES-CTR:  {calculate_correlation(arr_ctr, 'horizontal'):.4f}")
-    
-    arr_ecb = np.frombuffer(ct_ecb[:len(original_bytes)], dtype=np.uint8).reshape(shape)
-    print(f"AES-ECB:  {calculate_correlation(arr_ecb, 'horizontal'):.4f}")
-
-    print("\n" + "="*50)
-    print("ШАГ 4: ГИСТОГРАММЫ")
-    print("="*50)
+    print("\n3. Построение гистограмм...")
     plot_histograms({
         "Оригинал": original_bytes,
-        "XOR": ct_xor,
+        algorithm.upper(): ct_main[:ct_len]
+    }, filename=f"results/histograms_{algorithm}.png")
 
-        "AES-ECB": ct_ecb[:len(original_bytes)], 
-        "AES-CTR": ct_ctr
-    }, filename="results/histograms.png")
-    print("Графики сохранены в results/histograms.png")
+    print(f"\n4. NPCR/UACI для {algorithm.upper()}")
+    key_2[0] ^= 0x01 
+    key_2 = bytes(key_2)
 
-    print("\n" + "="*50)
-    print("ШАГ 5: ЭКСПЕРИМЕНТ С КЛЮЧОМ (NPCR/UACI для AES-CTR)")
-    print("="*50)
-
-    aes_key_2 = bytearray(aes_key)
-    aes_key_2[0] ^= 0x01 
-    aes_key_2 = bytes(aes_key_2)
-
-    ct_ctr_2, _ = aes_ctr_encrypt(original_bytes, aes_key_2)
+    if algorithm == "xor":
+        ct_main_2 = xor_crypt(original_bytes, key_2)
+    elif algorithm == "aes-ecb":
+        ct_main_2 = aes_ecb_encrypt(original_bytes, key_2)
+    elif algorithm == "aes-ctr":
+        ct_main_2, _ = aes_ctr_encrypt(original_bytes, key_2, nonce=nonce)
     
-    npcr, uaci = calculate_npcr_uaci(ct_ctr, ct_ctr_2)
-    print(f"NPCR: {npcr:.2f}% (идеал ~99.6%)")
-    print(f"UACI: {uaci:.2f}% (идеал ~33.4%)")
+    npcr, uaci = calculate_npcr_uaci(ct_main[:ct_len], ct_main_2[:ct_len])
+    print(f"NPCR: {npcr:.2f}%")
+    print(f"UACI: {uaci:.2f}%")
 
 if __name__ == "__main__":
     main()

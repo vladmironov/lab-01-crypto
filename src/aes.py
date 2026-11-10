@@ -12,8 +12,9 @@ def aes_ecb_decrypt(ciphertext: bytes, key: bytes):
     cipher = AES.new(key, AES.MODE_ECB)
     return unpad(cipher.decrypt(ciphertext), AES.block_size)
 
-def aes_ctr_encrypt(plain: bytes, key: bytes):
-    nonce = get_random_bytes(8) # 8 байт nonce
+def aes_ctr_encrypt(plain: bytes, key: bytes, nonce: bytes = None):
+    if nonce is None:
+        nonce = get_random_bytes(8) 
     cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
     ciphertext = cipher.encrypt(plain)
     return ciphertext, nonce

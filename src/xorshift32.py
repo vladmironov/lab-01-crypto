@@ -34,7 +34,7 @@ def get_key(seed: int, length: int):
     
     return bytes(out[:length])
 
-def xor_crypt(data: bytes, key: bytes) -> bytes:
+def xor_crypt(data: bytes, key: bytes):
     seed = init_seed(key)
     ks = get_key(seed, len(data))
 
@@ -44,7 +44,7 @@ def xor_crypt(data: bytes, key: bytes) -> bytes:
     return bytes(final)
 
 ## Быстрые проверки
-
+'''
 if __name__ == "__main__":
     key = b"my-secret-key"
     msg = b"Hello, World! Test message for XOR stream cipher, 1234567890."
@@ -57,3 +57,5 @@ if __name__ == "__main__":
     print("back  :", pt)
     print("len ok:", len(ct) == len(msg))
     print("round-trip ok:", pt == msg)
+
+'''
