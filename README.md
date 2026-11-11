@@ -19,7 +19,7 @@ python -m pip install numpy pillow pycryptodome matplotlib
 python -m pip cache purge
 ```
 
-Файл для запуска - **main.py**. В нем уже есть все необходимые зависимости.
+Файл для запуска - **main.py**. В нем уже есть все необходимые импорты.
 
 **Важно:** если хотите поменять алгоритм или изображение, в файле **meta.json**
 
@@ -46,7 +46,7 @@ python -m pip cache purge
 Запустите программу командой
 
 ```
-python ~/lab-01-crypto/src/main.py
+python src/main.py
 ```
 
 **Приятного использования!**
