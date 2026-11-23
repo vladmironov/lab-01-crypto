@@ -1,5 +1,8 @@
+import csv
+import hashlib
 import json
 import os
+
 import numpy as np
 from PIL import Image
 
@@ -7,100 +10,133 @@ from xorshift32 import xor_crypt
 from aes import aes_ecb_encrypt, aes_ecb_decrypt, aes_ctr_encrypt, aes_ctr_decrypt
 from metrics import calculate_entropy, calculate_correlation, plot_histograms, calculate_npcr_uaci
 
+
 def main():
     os.makedirs("results", exist_ok=True)
     os.makedirs("recover", exist_ok=True)
     os.makedirs("encrypted", exist_ok=True)
 
-    meta_path = "meta.json"
+    with open("meta.json", "r", encoding="utf-8") as f:
+        m = json.load(f)
 
-    with open(meta_path, "r", encoding="utf-8") as f:
-        meta_data = json.load(f)
-        
-    meta_data["nonce"] = os.urandom(8).hex()
+    if "nonce" not in m:
+        m["nonce"] = os.urandom(8).hex()
+        with open("meta.json", "w", encoding="utf-8") as f:
+            json.dump(m, f, indent=4)
 
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta_data, f, indent=4)
+    alg = m.get("algorithm", "aes-ctr")
+    nr = bytes.fromhex(m["nonce"])
 
-    algorithm = meta_data.get("algorithm", "aes-ctr")
-    source_img = meta_data.get("source", "gradient.png")
-    nonce = bytes.fromhex(meta_data["nonce"])
+    xk = b"my-secret-xor-key"
+    ak = b"0123456789abcdef"
 
-    img_path = f"img/{source_img}"
+    rs = []
 
-    if not os.path.exists(img_path):
-        print(f"Ошибка: Файл {img_path} не найден!")
-        return
+    for src in ["gradient.png", "checkerboard.png"]:
+        p = f"img/{src}"
+        if not os.path.exists(p):
+            print(f"Пропуск: {p} не найден")
+            continue
 
-    img = Image.open(img_path).convert("RGB")
-    img_array = np.array(img)
-    original_bytes = img_array.tobytes()
-    shape = img_array.shape
+        img = Image.open(p).convert("RGB")
+        a = np.array(img)
+        ob = a.tobytes()
+        sh = a.shape
+        st = src.replace(".png", "")
 
-    xor_key = b"my-secret-xor-key"
-    aes_key = b"0123456789abcdef"
+        n = hashlib.sha256(nr + src.encode()).digest()[:8] if alg == "aes-ctr" else None
 
-    print(f"Алгоритм из meta.json: {algorithm}")
-    print(f"Исходный файл: {source_img}")
-    print()
+        if alg == "xor":
+            cf = xor_crypt(ob, xk)
+        elif alg == "aes-ecb":
+            cf = aes_ecb_encrypt(ob, ak)
+        elif alg == "aes-ctr":
+            cf, _ = aes_ctr_encrypt(ob, ak, nonce=n)
+        else:
+            print(f"Неизвестный алгоритм {alg}")
+            return
 
-    if algorithm == "xor":
-        ct_main = xor_crypt(original_bytes, xor_key)
-        pt_main = xor_crypt(ct_main, xor_key)
-        ct_len = len(ct_main)
-        key_2 = bytearray(xor_key)
-    elif algorithm == "aes-ecb":
-        ct_main = aes_ecb_encrypt(original_bytes, aes_key)
-        pt_main = aes_ecb_decrypt(ct_main, aes_key)
-        ct_len = len(original_bytes)
-        key_2 = bytearray(aes_key)
-    elif algorithm == "aes-ctr":
-        ct_main, _ = aes_ctr_encrypt(original_bytes, aes_key, nonce=nonce)
-        pt_main = aes_ctr_decrypt(ct_main, aes_key, nonce)
-        ct_len = len(ct_main)
-        key_2 = bytearray(aes_key)
-    else:
-        print(f"Ошибка: Неизвестный алгоритм {algorithm}")
-        return
+        ci = cf[:len(ob)]
 
-    print(f"Обратимость: {original_bytes == pt_main}")
-    
-    Image.fromarray(np.frombuffer(ct_main[:ct_len], dtype=np.uint8).reshape(shape)).save(f"encrypted/encrypted_{algorithm}.png")
-    Image.fromarray(np.frombuffer(pt_main, dtype=np.uint8).reshape(shape)).save(f"recover/recovered_{algorithm}.png")
+        bp = f"encrypted/{st}_{alg}.bin"
+        with open(bp, "wb") as f:
+            f.write(cf)
 
-    print(f"\n{algorithm.upper()}")
-    
-    print("\n1. Энтропия")
-    print(f"Оригинал: {calculate_entropy(original_bytes):.4f}")
-    print(f"{algorithm.upper()}: {calculate_entropy(ct_main[:ct_len]):.4f}")
+        Image.fromarray(
+            np.frombuffer(ci, dtype=np.uint8).reshape(sh)
+        ).save(f"encrypted/encrypted_{st}_{alg}.png")
 
-    print("\n2. Корреляция")
-    print(f"Оригинал: {calculate_correlation(img_array):.4f}")
-    
-    arr_main = np.frombuffer(ct_main[:ct_len], dtype=np.uint8).reshape(shape)
-    print(f"{algorithm.upper()}: {calculate_correlation(arr_main, 'horizontal'):.4f}")
-    print(f"{algorithm.upper()}: {calculate_correlation(arr_main, 'vertical'):.4f}")
+        with open(bp, "rb") as f:
+            sv = f.read()
 
-    print("\n3. Построение гистограмм...")
-    plot_histograms({
-        "Оригинал": original_bytes,
-        algorithm.upper(): ct_main[:ct_len]
-    }, filename=f"results/histograms_{algorithm}.png")
+        if alg == "xor":
+            pt = xor_crypt(sv, xk)
+        elif alg == "aes-ecb":
+            pt = aes_ecb_decrypt(sv, ak)
+        else:
+            pt = aes_ctr_decrypt(sv, ak, n)
 
-    print(f"\n4. NPCR/UACI для {algorithm.upper()}")
-    key_2[0] ^= 0x01 
-    key_2 = bytes(key_2)
+        Image.fromarray(
+            np.frombuffer(pt, dtype=np.uint8).reshape(sh)
+        ).save(f"recover/recovered_{st}_{alg}.png")
 
-    if algorithm == "xor":
-        ct_main_2 = xor_crypt(original_bytes, key_2)
-    elif algorithm == "aes-ecb":
-        ct_main_2 = aes_ecb_encrypt(original_bytes, key_2)
-    elif algorithm == "aes-ctr":
-        ct_main_2, _ = aes_ctr_encrypt(original_bytes, key_2, nonce=nonce)
-    
-    npcr, uaci = calculate_npcr_uaci(ct_main[:ct_len], ct_main_2[:ct_len])
-    print(f"NPCR: {npcr:.2f}%")
-    print(f"UACI: {uaci:.2f}%")
+        rev = pt == ob
+
+        ent = calculate_entropy(ci)
+        ca = np.frombuffer(ci, dtype=np.uint8).reshape(sh)
+        ch = calculate_correlation(ca, "horizontal")
+        cv = calculate_correlation(ca, "vertical")
+
+        bl = [cf[i:i + 16] for i in range(0, len(cf), 16)]
+        rp = len(bl) - len(set(bl))
+
+        rs.append({
+            "изображение": src,
+            "метод": alg,
+            "энтропия": round(ent, 6),
+            "корреляция X": round(ch, 6),
+            "корреляция Y": round(cv, 6),
+            "обратимость": rev,
+            "повтор_блоков": rp,
+            "npcr": "",
+            "uaci": "",
+        })
+
+        plot_histograms(
+            {"Оригинал": ob, alg.upper(): ci},
+            filename=f"results/histograms_{st}_{alg}.png",
+        )
+
+        if src == "gradient.png":
+            if alg == "xor":
+                k2 = bytearray(xk)
+                k2[0] ^= 0x01
+                k2 = bytes(k2)
+                c2 = xor_crypt(ob, k2)
+            elif alg == "aes-ecb":
+                k2 = bytearray(ak)
+                k2[0] ^= 0x01
+                k2 = bytes(k2)
+                c2 = aes_ecb_encrypt(ob, k2)[:len(ob)]
+            else:
+                k2 = bytearray(ak)
+                k2[0] ^= 0x01
+                k2 = bytes(k2)
+                c2, _ = aes_ctr_encrypt(ob, k2, nonce=n)
+
+            npcr, uaci = calculate_npcr_uaci(ci, c2)
+            rs[-1]["npcr"] = round(npcr, 2)
+            rs[-1]["uaci"] = round(uaci, 2)
+
+    with open("results/data.csv", "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=[
+            "изображение", "метод", "энтропия", "корреляция X", "корреляция Y",
+            "обратимость", "повтор_блоков", "npcr", "uaci",
+        ])
+        w.writeheader()
+        for r in rs:
+            w.writerow(r)
+
 
 if __name__ == "__main__":
     main()

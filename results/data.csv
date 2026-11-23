@@ -1,11 +1,3 @@
-Метод;Энтропия;Corr X;Corr Y
-XOR;7,9998;-0,0007;-0,0021
-AES-ECB;7,9998;0,0024;-0,0006
-AES-CTR;7,9998;0,0021;-0,0005
-Оригинал;7,9716;1;
-;;;
-;;;
-Метод;NPCR;UACI;
-XOR;99,61%;33,44%;
-AES-ECB;99,60%;33,41%;
-AES-CTR;99,59%;33,46%;
+image,method,entropy,corr_h,corr_v,reversible,repeated_blocks,npcr,uaci
+gradient.png,xor,7.999766,-0.000741,-0.002106,True,0,99.62,33.49
+checkerboard.png,xor,7.999756,-0.000785,-0.000131,True,0,,
